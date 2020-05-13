@@ -39,6 +39,12 @@ class Bot:
             elif b'\xee\x01\x01You are already in a party. Failed to create new party.\x00' in data:
                 print("Already in party.")
 
+            elif data.startswith(b'#') and data.endswith(b'\x00'):
+                messageInfo = dataDecode[1:-1].split('*', 1)
+                if len(messageInfo) == 2:
+                    username, message = messageInfo
+                    print("[Lobby] [%s] %s" % (username, message))
+
             # Creating new party packet (send): \x1f\x01\x00
             # Creating new party packet (receive): \x1d\x01\x00
 
@@ -48,6 +54,9 @@ class Bot:
     async def send_packet(self, packet):
         self.writer.write(packet)
         await self.writer.drain()
+
+    async def send_lobby_message(self, message):
+        await self.send_packet(b'$%s\x00' % message.encode("utf-8"))
 
     def generate_password(self, password):
         key = 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAziIxzMIz7ZX4KG5317Sm\nVeCt9SYIe/+qL3hqP5NUX0i1iTmD7x9hFR8YoOHdAqdCJ3dxi3npkIsO6Eoz0l3e\nH7R99DX16vbnBCyvA3Hkb1B/0nBwOe6mCq73vBdRgfHU8TOF9KtUOx5CVqR50U7M\ntKqqc6M19OZXZuZSDlGLfiboY99YV2uH3dXysFhzexCZWpmA443eV5ismvj3Nyxv\nRk/4ushZV50vrDjYiInNEj4ICbTNXQULFs6Aahmt6qmibEC6bRl0S4TZRtzuk2a3\nTpinLJooDTt9s5BvRRh8DLFZWrkWojgrzS0sSNcNzPAXYFyTOYEovWWKW7TgUYfA\ndwIDAQAB'
