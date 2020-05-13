@@ -1,4 +1,5 @@
 import asyncio
+import pyparsing as pp
 import re
 from base64 import b64decode, b64encode
 from Crypto.PublicKey import RSA
@@ -14,6 +15,8 @@ class Bot:
         self.reader = None
         self.writer = None
 
+        self.referralCodes = []
+
     async def login(self):
         self.reader, self.writer = await asyncio.open_connection('live4.tos.blankmediagames.com', 3600)
         await self.send_packet(b'\x02\x02\x02\x01' + b'13050' + b'\x1e' + self.username.encode() + b'\x1e' + self.password + b'\x00') # 13050 is something like version.
@@ -21,8 +24,10 @@ class Bot:
     
     async def listen(self):
         while True:
-            data = await self.reader.read(4096)
-            dataDecode = data.decode("utf-8", errors="ignore")
+            await asyncio.sleep(0)
+
+            data = await self.reader.read(8192)
+            dataString = data.decode("utf-8", errors="ignore")
             print(data)
 
             if data == b'\xe2\x03\x00':
@@ -34,26 +39,46 @@ class Bot:
             elif data == b'\x01\x02\x00':
                 print("Logged in.")
                 self.loggedIn = True
-                await self.send_packet(b'K\x00') # This packet is sent after login; I don't know what it does: 'K\x00'
-
+                
             elif b'\xee\x01\x01You are already in a party. Failed to create new party.\x00' in data:
                 print("Already in party.")
 
             elif data.startswith(b'#') and data.endswith(b'\x00'):
-                messageInfo = dataDecode[1:-1].split('*', 1)
+                messageInfo = dataString[1:-1].split('*', 1)
                 if len(messageInfo) == 2:
                     username, message = messageInfo
                     print("[Lobby] [%s] %s" % (username, message))
 
+            elif b',\x01*' in data:
+                word = pp.Word(pp.alphanums)
+                rule = pp.nestedExpr(',\x01*', ',\x01')
+                for referralCode in rule.searchString(dataString):
+                    if len(referralCode[0][0]) == 20:
+                        self.referralCodes.append(referralCode[0][0])
+
+            elif data.startswith(b'\x1b') and data.endswith(b'\x00'):
+                try:
+                    userid = re.search(r'\x1b(.+?)\\*0\\*', dataString).group(1)[:-1]
+                    message = re.search(r'\\*0\\*(.+?)\x00', dataString).group(1)[1:]
+                    print("[Private Message] [%s] %s" % (userid, message))
+                except AttributeError:
+                    pass
+                
             # Creating new party packet (send): \x1f\x01\x00
             # Creating new party packet (receive): \x1d\x01\x00
 
             # Lobby sending message packet (send): $message\x00
             # Lobby sending message packet (receive): #username*message\x00
 
+            # Private Message (send): \x1duser_name*message\x00
+            # Private Message (receive): \x1buser_id*0*message\x00
+
     async def send_packet(self, packet):
         self.writer.write(packet)
         await self.writer.drain()
+
+    async def send_private_message(self, username, message):
+        await self.send_packet(b'\x1d%s*%s\x00' % (username.encode("utf-8"), message.encode("utf-8")))
 
     async def send_lobby_message(self, message):
         await self.send_packet(b'$%s\x00' % message.encode("utf-8"))
