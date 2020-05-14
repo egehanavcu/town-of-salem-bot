@@ -24,11 +24,8 @@ class Bot:
     
     async def listen(self):
         while True:
-            await asyncio.sleep(0)
-
             data = await self.reader.read(8192)
             dataString = data.decode("utf-8", errors="ignore")
-            print(data)
 
             if data == b'\xe2\x03\x00':
                 if not self.loggedIn:
@@ -58,10 +55,14 @@ class Bot:
 
             elif data.startswith(b'\x1b') and data.endswith(b'\x00'):
                 try:
-                    userid = re.search(r'\x1b(.+?)\\*0\\*', dataString).group(1)[:-1]
-                    message = re.search(r'\\*0\\*(.+?)\x00', dataString).group(1)[1:]
-                    print("[Private Message] [%s] %s" % (userid, message))
-                except AttributeError:
+                    message_sender = re.search(r'\*(.+?)\*', dataString).group(1)
+                    username_or_userid = re.search(r'\x1b(.+?)\\*'+ message_sender +'\\*', dataString).group(1)[:-1]
+                    message = re.search(r'\\*'+ message_sender +'\\*(.+?)\x00', dataString).group(1)
+                    if message_sender == '0':
+                        print("[Private Message] [%s] %s" % (username_or_userid, message))
+                    elif message_sender == '1':
+                        print("[Sent] [%s] [Private Message] %s" % (username_or_userid, message))
+                except Exception:
                     pass
                 
             # Creating new party packet (send): \x1f\x01\x00
@@ -75,7 +76,6 @@ class Bot:
 
     async def send_packet(self, packet):
         self.writer.write(packet)
-        await self.writer.drain()
 
     async def send_private_message(self, username, message):
         await self.send_packet(b'\x1d%s*%s\x00' % (username.encode("utf-8"), message.encode("utf-8")))
