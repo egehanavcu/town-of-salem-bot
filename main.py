@@ -6,76 +6,78 @@ from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_v1_5
 from getpass import getpass
 
-class Bot:
+class Bot(asyncio.Protocol):
     def __init__(self, username, password):
         self.username = username
         self.password = self.generate_password(password)    
         self.loggedIn = False
 
-        self.reader = None
-        self.writer = None
-
+        self.transport = None
         self.referralCodes = []
 
-    async def login(self):
-        self.reader, self.writer = await asyncio.open_connection('live4.tos.blankmediagames.com', 3600)
-        await self.send_packet(b'\x02\x02\x02\x01' + b'13050' + b'\x1e' + self.username.encode() + b'\x1e' + self.password + b'\x00') # 13050 is something like version.
-        await self.listen()
+    def connection_made(self, transport):
+        self.transport = transport
+        asyncio.ensure_future(self.send_packet(b'\x02\x02\x02\x01' + b'13050' + b'\x1e' + self.username.encode() + b'\x1e' + self.password + b'\x00')) # 13050 is something like version.
     
-    async def listen(self):
-        while True:
-            data = await self.reader.read(8192)
-            dataString = data.decode("utf-8", errors="ignore")
+    def data_received(self, data):
+        asyncio.ensure_future(self.data_received_async(data))
 
-            if data == b'\xe2\x03\x00':
-                if not self.loggedIn:
-                    print("Invalid login.")
-                else:
-                    print("Disconnected.")
+    async def data_received_async(self, data):
+        dataString = data.decode("utf-8", errors="ignore")
 
-            elif data == b'\x01\x02\x00':
-                print("Logged in.")
-                self.loggedIn = True
-                
-            elif b'\xee\x01\x01You are already in a party. Failed to create new party.\x00' in data:
-                print("Already in party.")
+        if data == b'\xe2\x03\x00':
+            if not self.loggedIn:
+                print("Invalid login.")
+            else:
+                print("Disconnected.")
 
-            elif data.startswith(b'#') and data.endswith(b'\x00'):
-                messageInfo = dataString[1:-1].split('*', 1)
-                if len(messageInfo) == 2:
-                    username, message = messageInfo
-                    print("[Lobby] [%s] %s" % (username, message))
+        elif data == b'\x01\x02\x00':
+            print("Logged in.")
+            self.loggedIn = True
+            
+        elif b'\xee\x01\x01You are already in a party. Failed to create new party.\x00' in data:
+            print("Already in party.")
 
-            elif b',\x01*' in data:
-                word = pp.Word(pp.alphanums)
-                rule = pp.nestedExpr(',\x01*', ',\x01')
-                for referralCode in rule.searchString(dataString):
-                    if len(referralCode[0][0]) == 20:
-                        self.referralCodes.append(referralCode[0][0])
+        elif data.startswith(b'#') and data.endswith(b'\x00'):
+            messageInfo = dataString[1:-1].split('*', 1)
+            if len(messageInfo) == 2:
+                username, message = messageInfo
+                print("[Lobby] [%s] %s" % (username, message))
 
-            elif data.startswith(b'\x1b') and data.endswith(b'\x00'):
-                try:
-                    message_sender = re.search(r'\*(.+?)\*', dataString).group(1)
-                    username_or_userid = re.search(r'\x1b(.+?)\\*'+ message_sender +'\\*', dataString).group(1)[:-1]
-                    message = re.search(r'\\*'+ message_sender +'\\*(.+?)\x00', dataString).group(1)
-                    if message_sender == '0':
-                        print("[Private Message] [%s] %s" % (username_or_userid, message))
-                    elif message_sender == '1':
-                        print("[Sent] [%s] [Private Message] %s" % (username_or_userid, message))
-                except Exception:
-                    pass
-                
-            # Creating new party packet (send): \x1f\x01\x00
-            # Creating new party packet (receive): \x1d\x01\x00
+        elif b',\x01*' in data:
+            word = pp.Word(pp.alphanums)
+            rule = pp.nestedExpr(',\x01*', ',\x01')
+            for referralCode in rule.searchString(dataString):
+                if len(referralCode[0][0]) == 20:
+                    self.referralCodes.append(referralCode[0][0])
 
-            # Lobby sending message packet (send): $message\x00
-            # Lobby sending message packet (receive): #username*message\x00
+        elif data.startswith(b'\x1b') and data.endswith(b'\x00'):
+            try:
+                message_sender = re.search(r'\*(.+?)\*', dataString).group(1)
+                username_or_userid = re.search(r'\x1b(.+?)\\*'+ message_sender +'\\*', dataString).group(1)[:-1]
+                message = re.search(r'\\*'+ message_sender +'\\*(.+?)\x00', dataString).group(1)
+                if message_sender == '0':
+                    print("[Private Message] [%s] %s" % (username_or_userid, message))
+                elif message_sender == '1':
+                    print("[Sent] [%s] [Private Message] %s" % (username_or_userid, message))
+            except Exception:
+                pass
+        
+        elif data.startswith(b'\xa2d') and data.endswith(b'\x00'):
+            maintenance_message = dataString[1:-1]
+            print(maintenance_message)
 
-            # Private Message (send): \x1duser_name*message\x00
-            # Private Message (receive): \x1buser_id*0*message\x00
+        # Creating new party packet (send): \x1f\x01\x00
+        # Creating new party packet (receive): \x1d\x01\x00
+
+        # Lobby sending message packet (send): $message\x00
+        # Lobby sending message packet (receive): #username*message\x00
+
+        # Private Message (send): \x1dusername*message\x00
+        # Private Message (receive): \x1buserid*0*message\x00
 
     async def send_packet(self, packet):
-        self.writer.write(packet)
+        self.transport.write(packet)
 
     async def send_private_message(self, username, message):
         await self.send_packet(b'\x1d%s*%s\x00' % (username.encode("utf-8"), message.encode("utf-8")))
@@ -91,4 +93,8 @@ class Bot:
 username = input("Username: ")
 password = getpass("Password: ")
 
-asyncio.run(Bot(username, password).login())
+loop = asyncio.get_event_loop()
+coro = loop.create_connection(lambda: Bot(username, password), 'live4.tos.blankmediagames.com', 3600)
+loop.run_until_complete(coro)
+loop.run_forever()
+loop.close()
